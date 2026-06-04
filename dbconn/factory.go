@@ -298,13 +298,7 @@ func (f factory) Credentials(cfg blip.ConfigMonitor) (CredentialFunc, error) {
 
 	// Amazon Secrets Manager, could be rotated
 	if cfg.AWS.PasswordSecret != "" {
-		blip.Debug("%s: AWS Secrets Manager password", cfg.MonitorId)
-		awscfg, err := f.awsConfig.Make(blip.AWS{Region: cfg.AWS.Region}, cfg.Hostname)
-		if err != nil {
-			return nil, err
-		}
-		secret := aws.NewSecret(cfg.AWS.PasswordSecret, awscfg)
-		return f.passwordSecretCredentialFunc(cfg, secret), nil
+		return f.passwordSecretCredentialFunc(cfg)
 	}
 
 	// Password file, could be "rotated" (new password written to file)
@@ -352,11 +346,13 @@ func (f factory) Credentials(cfg blip.ConfigMonitor) (CredentialFunc, error) {
 	}, nil
 }
 
-type passwordSecretGetter interface {
-	GetSecretPayload(context.Context) ([]byte, error)
-}
-
-func (f factory) passwordSecretCredentialFunc(cfg blip.ConfigMonitor, secret passwordSecretGetter) CredentialFunc {
+func (f factory) passwordSecretCredentialFunc(cfg blip.ConfigMonitor) (CredentialFunc, error) {
+	blip.Debug("%s: AWS Secrets Manager password", cfg.MonitorId)
+	awscfg, err := f.awsConfig.Make(blip.AWS{Region: cfg.AWS.Region}, cfg.Hostname)
+	if err != nil {
+		return nil, err
+	}
+	secret := aws.NewSecret(cfg.AWS.PasswordSecret, awscfg)
 	parser := f.passwordSecretParser
 	if parser == nil {
 		parser = blip.DefaultPasswordSecretParser
@@ -379,7 +375,7 @@ func (f factory) passwordSecretCredentialFunc(cfg blip.ConfigMonitor, secret pas
 			Password: parsedSecret.Password,
 			Username: parsedSecret.Username,
 		}, nil
-	}
+	}, nil
 }
 
 // --------------------------------------------------------------------------
