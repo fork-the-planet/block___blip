@@ -132,7 +132,7 @@ If you embed Blip and use a different secret payload shape, set the
 [`blip.Plugins.ParsePasswordSecret`](https://pkg.go.dev/github.com/cashapp/blip#Plugins)
 callback before calling `Server.Boot`.
 The callback receives one raw payload: `SecretString` bytes when present, otherwise `SecretBinary` bytes.
-It should set the password and, if needed, username on the secret value passed to it.
+It should set the password and, if needed, username on the credentials value passed to it.
 
 The [AWS credentials](#credentials) that Blip uses must be allowed to read the secret with a policy privilege like:
 

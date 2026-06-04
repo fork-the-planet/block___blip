@@ -64,11 +64,11 @@ Every plugin is optional: if specified, it overrides the built-in functionality.
 Set [`Plugins.ParsePasswordSecret`](https://pkg.go.dev/github.com/cashapp/blip#Plugins) to customize how Blip maps the raw AWS Secrets Manager payload from [`config.aws.password-secret`]({{< ref "/config/config-file#password-secret" >}}) to MySQL credentials.
 If this callback is not set, Blip uses [`DefaultPasswordSecretParser`](https://pkg.go.dev/github.com/cashapp/blip#DefaultPasswordSecretParser): `password` is required, and `username` is optional.
 Blip passes `SecretString` bytes when present; otherwise, it passes `SecretBinary` bytes.
-The `secret` argument is initialized with the configured monitor username; custom parsers must set `secret.Password` and can override `secret.Username`.
+The `credentials` argument is initialized with the configured monitor username; custom parsers must set `credentials.Password` and can override `credentials.Username`.
 
 ```go
-plugins.ParsePasswordSecret = func(ctx context.Context, cfg blip.ConfigMonitor, payload []byte, secret *blip.Secret) error {
-    secret.Password = string(payload)
+plugins.ParsePasswordSecret = func(ctx context.Context, cfg blip.ConfigMonitor, payload []byte, credentials *blip.DbCredentials) error {
+    credentials.Password = string(payload)
     return nil
 }
 ```

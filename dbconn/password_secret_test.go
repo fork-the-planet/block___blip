@@ -100,19 +100,19 @@ func TestPasswordSecretCredentialFuncCustomParser(t *testing.T) {
 	called := false
 	f := factory{
 		awsConfig: testAWSConfigFactory{cfg: awscfg},
-		passwordSecretParser: func(_ context.Context, cfg blip.ConfigMonitor, payload []byte, secret *blip.Secret) error {
+		passwordSecretParser: func(_ context.Context, cfg blip.ConfigMonitor, payload []byte, credentials *blip.DbCredentials) error {
 			called = true
 			if cfg.Username != "config-user" {
 				t.Errorf("cfg.Username=%q, expected config-user", cfg.Username)
 			}
-			if secret.Username != "config-user" {
-				t.Errorf("pre-populated Username=%q, expected config-user", secret.Username)
+			if credentials.Username != "config-user" {
+				t.Errorf("pre-populated Username=%q, expected config-user", credentials.Username)
 			}
 			if string(payload) != "secret-user:secret-pass" {
 				t.Errorf("payload=%q, expected secret-user:secret-pass", string(payload))
 			}
-			secret.Username = "secret-user"
-			secret.Password = "secret-pass"
+			credentials.Username = "secret-user"
+			credentials.Password = "secret-pass"
 			return nil
 		},
 	}
@@ -150,7 +150,7 @@ func TestPasswordSecretCredentialFuncParserError(t *testing.T) {
 	parseErr := errors.New("parse secret")
 	f := factory{
 		awsConfig: testAWSConfigFactory{cfg: awscfg},
-		passwordSecretParser: func(context.Context, blip.ConfigMonitor, []byte, *blip.Secret) error {
+		passwordSecretParser: func(context.Context, blip.ConfigMonitor, []byte, *blip.DbCredentials) error {
 			return parseErr
 		},
 	}

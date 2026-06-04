@@ -99,24 +99,25 @@ type SinkFactoryArgs struct {
 	Tags      map[string]string // config.monitor.tags
 }
 
-// Secret is a MySQL username/password parsed from a secret payload.
-type Secret struct {
+// DbCredentials are MySQL credentials parsed or loaded for a connection.
+type DbCredentials struct {
 	Username string
 	Password string
+	TLS      ConfigTLS
 }
 
-// PasswordSecretParser maps an AWS Secrets Manager payload to a Secret.
-// The Secret argument is pre-populated with config defaults and can be modified
+// PasswordSecretParser maps an AWS Secrets Manager payload to database credentials.
+// The DbCredentials argument is pre-populated with config defaults and can be modified
 // by the parser. The payload is the raw SecretString or SecretBinary value.
-type PasswordSecretParser func(context.Context, ConfigMonitor, []byte, *Secret) error
+type PasswordSecretParser func(context.Context, ConfigMonitor, []byte, *DbCredentials) error
 
 // DefaultPasswordSecretParser parses the default AWS RDS secret shape:
 // "password" is required, and "username" is optional.
-func DefaultPasswordSecretParser(_ context.Context, cfg ConfigMonitor, payload []byte, secret *Secret) error {
-	if secret == nil {
-		return fmt.Errorf("secret destination is nil")
+func DefaultPasswordSecretParser(_ context.Context, cfg ConfigMonitor, payload []byte, credentials *DbCredentials) error {
+	if credentials == nil {
+		return fmt.Errorf("credentials destination is nil")
 	}
-	secret.Username = cfg.Username
+	credentials.Username = cfg.Username
 
 	var secretPayload map[string]interface{}
 	if err := json.Unmarshal(payload, &secretPayload); err != nil {
@@ -130,7 +131,7 @@ func DefaultPasswordSecretParser(_ context.Context, cfg ConfigMonitor, payload [
 	if ok {
 		usernameStr, ok := username.(string)
 		if ok {
-			secret.Username = usernameStr
+			credentials.Username = usernameStr
 		}
 	}
 
@@ -142,7 +143,7 @@ func DefaultPasswordSecretParser(_ context.Context, cfg ConfigMonitor, payload [
 	if !ok {
 		return fmt.Errorf("invalid type for 'password' value of secret")
 	}
-	secret.Password = passwordStr
+	credentials.Password = passwordStr
 
 	return nil
 }

@@ -17,13 +17,7 @@ func init() {
 	dsndriver.SetHotswapFunc(Repo.ReloadDSN)
 }
 
-type Credentials struct {
-	Username string
-	Password string
-	TLS      blip.ConfigTLS
-}
-
-type CredentialFunc func(context.Context) (Credentials, error)
+type CredentialFunc func(context.Context) (blip.DbCredentials, error)
 
 type repo struct {
 	m *sync.Map

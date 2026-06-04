@@ -60,8 +60,8 @@ func TestDefaultPasswordSecretParser(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			cfg := blip.ConfigMonitor{Username: "config-user"}
-			secret := blip.Secret{}
-			err := blip.DefaultPasswordSecretParser(context.Background(), cfg, tt.payload, &secret)
+			credentials := blip.DbCredentials{}
+			err := blip.DefaultPasswordSecretParser(context.Background(), cfg, tt.payload, &credentials)
 			if tt.expectErr {
 				if err == nil {
 					t.Fatal("got nil error, expected non-nil error")
@@ -71,17 +71,17 @@ func TestDefaultPasswordSecretParser(t *testing.T) {
 			if err != nil {
 				t.Fatalf("got error %s, expected nil", err)
 			}
-			if secret.Username != tt.expectUsername {
-				t.Errorf("Username=%q, expected %q", secret.Username, tt.expectUsername)
+			if credentials.Username != tt.expectUsername {
+				t.Errorf("Username=%q, expected %q", credentials.Username, tt.expectUsername)
 			}
-			if secret.Password != tt.expectPassword {
-				t.Errorf("Password=%q, expected %q", secret.Password, tt.expectPassword)
+			if credentials.Password != tt.expectPassword {
+				t.Errorf("Password=%q, expected %q", credentials.Password, tt.expectPassword)
 			}
 		})
 	}
 }
 
-func TestDefaultPasswordSecretParserNilSecret(t *testing.T) {
+func TestDefaultPasswordSecretParserNilCredentials(t *testing.T) {
 	err := blip.DefaultPasswordSecretParser(context.Background(), blip.ConfigMonitor{}, []byte(`{}`), nil)
 	if err == nil {
 		t.Fatal("got nil error, expected non-nil error")
