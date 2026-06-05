@@ -32,17 +32,33 @@ var portSuffix = regexp.MustCompile(`:\d+$`)
 
 // factory is the internal implementation of blip.DbFactory.
 type factory struct {
-	awsConfig blip.AWSConfigFactory
-	modifyDB  func(*sql.DB, string)
+	awsConfig            blip.AWSConfigFactory
+	modifyDB             func(*sql.DB, string)
+	passwordSecretParser blip.PasswordSecretParser
+}
+
+// ConnFactoryOption configures the default MySQL connection factory.
+type ConnFactoryOption func(*factory)
+
+// WithPasswordSecretParser sets the parser used for AWS Secrets Manager
+// password-secret payloads.
+func WithPasswordSecretParser(parser blip.PasswordSecretParser) ConnFactoryOption {
+	return func(f *factory) {
+		f.passwordSecretParser = parser
+	}
 }
 
 // NewConnFactory returns a blip.NewConnFactory that connects to MySQL.
 // This is the only blip.NewConnFactor. It is created in Server.Defaults.
-func NewConnFactory(awsConfig blip.AWSConfigFactory, modifyDB func(*sql.DB, string)) factory {
-	return factory{
+func NewConnFactory(awsConfig blip.AWSConfigFactory, modifyDB func(*sql.DB, string), opts ...ConnFactoryOption) factory {
+	f := factory{
 		awsConfig: awsConfig,
 		modifyDB:  modifyDB,
 	}
+	for _, opt := range opts {
+		opt(&f)
+	}
+	return f
 }
 
 // Make makes a *sql.DB for the given monitor config. On success, it also returns
@@ -141,7 +157,7 @@ func (f factory) Make(cfg blip.ConfigMonitor) (*sql.DB, string, error) {
 		// TLS is configured, so make sure we reload it when the credentials are reloaded in case
 		// it was changed
 		origCredentialFunc := credentialFunc
-		credentialFunc = func(ctx context.Context) (Credentials, error) {
+		credentialFunc = func(ctx context.Context) (blip.DbCredentials, error) {
 			creds, err := origCredentialFunc(ctx)
 			if err != nil {
 				return creds, err
@@ -267,13 +283,13 @@ func (f factory) Credentials(cfg blip.ConfigMonitor) (CredentialFunc, error) {
 			return nil, err
 		}
 		token := aws.NewAuthToken(cfg.Username, cfg.Hostname, awscfg)
-		return func(ctx context.Context) (Credentials, error) {
+		return func(ctx context.Context) (blip.DbCredentials, error) {
 			passwd, err := token.Password(ctx)
 			if err != nil {
-				return Credentials{}, err
+				return blip.DbCredentials{}, err
 			}
 
-			return Credentials{
+			return blip.DbCredentials{
 				Password: passwd,
 				Username: cfg.Username,
 			}, nil
@@ -282,52 +298,18 @@ func (f factory) Credentials(cfg blip.ConfigMonitor) (CredentialFunc, error) {
 
 	// Amazon Secrets Manager, could be rotated
 	if cfg.AWS.PasswordSecret != "" {
-		blip.Debug("%s: AWS Secrets Manager password", cfg.MonitorId)
-		awscfg, err := f.awsConfig.Make(blip.AWS{Region: cfg.AWS.Region}, cfg.Hostname)
-		if err != nil {
-			return nil, err
-		}
-		secret := aws.NewSecret(cfg.AWS.PasswordSecret, awscfg)
-		return func(ctx context.Context) (Credentials, error) {
-			newSecret, err := secret.GetSecret(ctx)
-			if err != nil {
-				return Credentials{}, err
-			}
-
-			username, ok := newSecret["username"]
-			if !ok {
-				// The username key is optional. Default to config
-				username = cfg.Username
-			}
-			usernameStr, ok := username.(string)
-			if !ok {
-				username = cfg.Username
-			}
-			password, ok := newSecret["password"]
-			if !ok {
-				return Credentials{}, fmt.Errorf("error retrieving 'password' value of secret")
-			}
-			passwordStr, ok := password.(string)
-			if !ok {
-				return Credentials{}, fmt.Errorf("invalid type for 'password' value of secret")
-			}
-
-			return Credentials{
-				Password: passwordStr,
-				Username: usernameStr,
-			}, nil
-		}, nil
+		return f.passwordSecretCredentialFunc(cfg)
 	}
 
 	// Password file, could be "rotated" (new password written to file)
 	if cfg.PasswordFile != "" {
 		blip.Debug("%s: password file", cfg.MonitorId)
-		return func(context.Context) (Credentials, error) {
+		return func(context.Context) (blip.DbCredentials, error) {
 			bytes, err := os.ReadFile(cfg.PasswordFile)
 			if err != nil {
-				return Credentials{}, err
+				return blip.DbCredentials{}, err
 			}
-			return Credentials{
+			return blip.DbCredentials{
 				Password: string(bytes),
 				Username: cfg.Username,
 			}, err
@@ -337,12 +319,12 @@ func (f factory) Credentials(cfg blip.ConfigMonitor) (CredentialFunc, error) {
 	// Credentials in my.cnf file, could be rotated (username and/or password, along with TLS config)
 	if cfg.MyCnf != "" {
 		blip.Debug("%s my.cnf credentials", cfg.MonitorId)
-		return func(context.Context) (Credentials, error) {
+		return func(context.Context) (blip.DbCredentials, error) {
 			cfg, tlscfg, err := ParseMyCnf(cfg.MyCnf)
 			if err != nil {
-				return Credentials{}, err
+				return blip.DbCredentials{}, err
 			}
-			return Credentials{
+			return blip.DbCredentials{
 				Password: cfg.Password,
 				Username: cfg.Username,
 				TLS:      tlscfg,
@@ -353,14 +335,43 @@ func (f factory) Credentials(cfg blip.ConfigMonitor) (CredentialFunc, error) {
 	// Static password in Blip config file, not rotated
 	if cfg.Password != "" {
 		blip.Debug("%s: static password credentials", cfg.MonitorId)
-		return func(context.Context) (Credentials, error) {
-			return Credentials{Password: cfg.Password, Username: cfg.Username}, nil
+		return func(context.Context) (blip.DbCredentials, error) {
+			return blip.DbCredentials{Password: cfg.Password, Username: cfg.Username}, nil
 		}, nil
 	}
 
 	blip.Debug("%s: no password", cfg.MonitorId)
-	return func(context.Context) (Credentials, error) {
-		return Credentials{Password: "", Username: cfg.Username}, nil
+	return func(context.Context) (blip.DbCredentials, error) {
+		return blip.DbCredentials{Password: "", Username: cfg.Username}, nil
+	}, nil
+}
+
+func (f factory) passwordSecretCredentialFunc(cfg blip.ConfigMonitor) (CredentialFunc, error) {
+	blip.Debug("%s: AWS Secrets Manager password", cfg.MonitorId)
+	awscfg, err := f.awsConfig.Make(blip.AWS{Region: cfg.AWS.Region}, cfg.Hostname)
+	if err != nil {
+		return nil, err
+	}
+	secret := aws.NewSecret(cfg.AWS.PasswordSecret, awscfg)
+	parser := f.passwordSecretParser
+	if parser == nil {
+		parser = blip.DefaultPasswordSecretParser
+	}
+
+	return func(ctx context.Context) (blip.DbCredentials, error) {
+		payload, err := secret.GetSecretPayload(ctx)
+		if err != nil {
+			return blip.DbCredentials{}, err
+		}
+
+		credentials := blip.DbCredentials{
+			Username: cfg.Username,
+		}
+		if err := parser(ctx, cfg, payload, &credentials); err != nil {
+			return blip.DbCredentials{}, err
+		}
+
+		return credentials, nil
 	}, nil
 }
 

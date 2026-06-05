@@ -6,6 +6,7 @@ package blip
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"log"
 	"math"
@@ -98,6 +99,55 @@ type SinkFactoryArgs struct {
 	Tags      map[string]string // config.monitor.tags
 }
 
+// DbCredentials are MySQL credentials parsed or loaded for a connection.
+type DbCredentials struct {
+	Username string
+	Password string
+	TLS      ConfigTLS
+}
+
+// PasswordSecretParser maps an AWS Secrets Manager payload to database credentials.
+// The DbCredentials argument is pre-populated with config defaults and can be modified
+// by the parser. The payload is the raw SecretString or SecretBinary value.
+type PasswordSecretParser func(context.Context, ConfigMonitor, []byte, *DbCredentials) error
+
+// DefaultPasswordSecretParser parses the default AWS RDS secret shape:
+// "password" is required, and "username" is optional.
+func DefaultPasswordSecretParser(_ context.Context, cfg ConfigMonitor, payload []byte, credentials *DbCredentials) error {
+	if credentials == nil {
+		return fmt.Errorf("credentials destination is nil")
+	}
+	credentials.Username = cfg.Username
+
+	var secretPayload map[string]interface{}
+	if err := json.Unmarshal(payload, &secretPayload); err != nil {
+		return fmt.Errorf("cannot decode secret as JSON object: %s", err)
+	}
+	if secretPayload == nil {
+		return fmt.Errorf("secret value is 'null' literal")
+	}
+
+	username, ok := secretPayload["username"]
+	if ok {
+		usernameStr, ok := username.(string)
+		if ok {
+			credentials.Username = usernameStr
+		}
+	}
+
+	password, ok := secretPayload["password"]
+	if !ok {
+		return fmt.Errorf("error retrieving 'password' value of secret")
+	}
+	passwordStr, ok := password.(string)
+	if !ok {
+		return fmt.Errorf("invalid type for 'password' value of secret")
+	}
+	credentials.Password = passwordStr
+
+	return nil
+}
+
 // Plugins are function callbacks that override specific functionality of Blip.
 // Plugins are optional, but if specified it overrides the built-in functionality.
 type Plugins struct {
@@ -122,6 +172,10 @@ type Plugins struct {
 
 	// ModifyDB modifies the *sql.DB connection pool. Use with caution.
 	ModifyDB func(*sql.DB, string)
+
+	// ParsePasswordSecret maps an AWS Secrets Manager payload to MySQL credentials.
+	// If nil, Blip uses DefaultPasswordSecretParser.
+	ParsePasswordSecret PasswordSecretParser
 
 	// StartMonitor allows a monitor to start by returning true. Else the monitor
 	// is loaded but not started. This is used to load all monitors but start only
