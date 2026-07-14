@@ -123,6 +123,32 @@ func TestDatadogSink(t *testing.T) {
 	}
 }
 
+func TestDatadogSendBoundedByClientTimeout(t *testing.T) {
+	httpClient := &http.Client{
+		Timeout: 200 * time.Millisecond,
+		Transport: &mock.Transport{
+			RoundTripFunc: func(r *http.Request) (*http.Response, error) {
+				<-r.Context().Done()
+				return nil, r.Context().Err()
+			},
+		},
+	}
+	ddSink, err := NewDatadog("testmonitor", defaultOps(), map[string]string{}, httpClient)
+	require.NoError(t, err)
+
+	done := make(chan error, 1)
+	go func() {
+		done <- ddSink.Send(context.Background(), getBlipCounterMetrics(1, 1.0, false))
+	}()
+
+	select {
+	case err := <-done:
+		require.Error(t, err)
+	case <-time.After(2 * time.Second):
+		t.Fatal("Datadog.Send stalled: http.Client.Timeout did not bound the request")
+	}
+}
+
 func TestDatadogMetricsPerRequest(t *testing.T) {
 	callCount := 0
 	testPayloadSize := 5000

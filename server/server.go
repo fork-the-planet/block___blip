@@ -6,6 +6,7 @@ package server
 import (
 	"context"
 	"fmt"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -51,15 +52,27 @@ type httpClientFactory struct {
 }
 
 func (f httpClientFactory) MakeForSink(sinkName, monitorId string, opts, tags map[string]string) (*http.Client, error) {
-	client := &http.Client{}
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.DialContext = (&net.Dialer{
+		Timeout:   5 * time.Second,
+		KeepAlive: 30 * time.Second,
+	}).DialContext
+	transport.TLSHandshakeTimeout = 5 * time.Second
+	transport.ResponseHeaderTimeout = 5 * time.Second
+	transport.ExpectContinueTimeout = 1 * time.Second
+	transport.IdleConnTimeout = 30 * time.Second
+	transport.MaxIdleConnsPerHost = 2
 	if f.cfg.Proxy != "" {
 		proxyFunc := func(req *http.Request) (url *url.URL, err error) {
 			return url.Parse(f.cfg.Proxy)
 		}
-		client.Transport = &http.Transport{Proxy: proxyFunc}
+		transport.Proxy = proxyFunc
 		blip.Debug("%s sink %s http proxy via %s", monitorId, sinkName, f.cfg.Proxy)
 	}
-	return client, nil
+	return &http.Client{
+		Timeout:   10 * time.Second,
+		Transport: transport,
+	}, nil
 }
 
 // --------------------------------------------------------------------------

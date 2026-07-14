@@ -128,6 +128,33 @@ func TestRetry(t *testing.T) {
 	assert.Equal(t, expect, got)
 }
 
+func TestRetry_SendTimeoutBoundsInFlightSend(t *testing.T) {
+	blockingSink := mock.Sink{
+		SendFunc: func(ctx context.Context, m *blip.Metrics) error {
+			<-ctx.Done()
+			return ctx.Err()
+		},
+	}
+	rb := NewRetry(RetryArgs{
+		MonitorId:   "m1",
+		Sink:        blockingSink,
+		BufferSize:  3,
+		SendTimeout: 200 * time.Millisecond,
+	})
+
+	done := make(chan struct{})
+	go func() {
+		rb.Send(context.Background(), &blip.Metrics{Level: "1"})
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Retry.Send stalled: SendTimeout did not bound the in-flight send")
+	}
+}
+
 func TestRetryPopMiddle(t *testing.T) {
 	// Test that popping values from the middle of the stack works. This happens
 	// when, in this test for example, while sending metrics1, two more metrics
