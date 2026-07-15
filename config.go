@@ -7,6 +7,7 @@ import (
 	"crypto/x509"
 	"fmt"
 	"net"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -212,6 +213,32 @@ func (c Config) Validate() error {
 	return nil
 }
 
+// Redacted returns a copy of the config safe for logging. It redacts inline
+// passwords without changing the config used to connect to monitored databases.
+func (c Config) Redacted() Config {
+	redacted := c
+	redacted.HTTP = c.HTTP.Redacted()
+	redacted.MySQL.Password = redactPassword(redacted.MySQL.Password)
+	redacted.Sinks = c.Sinks.redacted()
+
+	// ConfigMonitor and ConfigPlans can refer to each other through
+	// ConfigPlans.Monitor. Preserve shared references and cycles while making
+	// copies so redaction never changes the live config.
+	seen := map[*ConfigMonitor]*ConfigMonitor{}
+	if c.Monitors != nil {
+		redacted.Monitors = make([]ConfigMonitor, len(c.Monitors))
+		for i := range c.Monitors {
+			seen[&c.Monitors[i]] = &redacted.Monitors[i]
+		}
+		for i := range c.Monitors {
+			redacted.Monitors[i] = c.Monitors[i].redacted(seen)
+		}
+	}
+	redacted.Plans = c.Plans.redacted(seen)
+
+	return redacted
+}
+
 func (c *Config) InterpolateEnvVars() {
 	// Blip server
 	c.API.InterpolateEnvVars()
@@ -295,6 +322,21 @@ func (c ConfigHTTP) Validate() error {
 
 func (c *ConfigHTTP) InterpolateEnvVars() {
 	c.Proxy = interpolateEnv(c.Proxy)
+}
+
+// Redacted returns a copy of the HTTP config safe for logging.
+func (c ConfigHTTP) Redacted() ConfigHTTP {
+	if c.Proxy == "" {
+		return c
+	}
+
+	proxyURL, err := url.Parse(c.Proxy)
+	if err != nil {
+		c.Proxy = "..."
+		return c
+	}
+	c.Proxy = proxyURL.Redacted()
+	return c
 }
 
 func (c *ConfigHTTP) ApplyDefaults(b Config) {
@@ -407,6 +449,18 @@ func DefaultConfigMonitor() ConfigMonitor {
 
 func (c ConfigMonitor) Validate() error {
 	return nil
+}
+
+// Redacted returns a copy of the monitor config safe for logging.
+func (c ConfigMonitor) Redacted() ConfigMonitor {
+	return c.redacted(map[*ConfigMonitor]*ConfigMonitor{})
+}
+
+func (c ConfigMonitor) redacted(seen map[*ConfigMonitor]*ConfigMonitor) ConfigMonitor {
+	c.Password = redactPassword(c.Password)
+	c.Sinks = c.Sinks.redacted()
+	c.Plans = c.Plans.redacted(seen)
+	return c
 }
 
 func (c *ConfigMonitor) ApplyDefaults(b Config) {
@@ -810,10 +864,15 @@ func (c *ConfigMySQL) InterpolateMonitor(m *ConfigMonitor) {
 }
 
 func (c ConfigMySQL) Redacted() string {
-	if c.Password != "" {
-		c.Password = "..."
-	}
+	c.Password = redactPassword(c.Password)
 	return fmt.Sprintf("%+v", c)
+}
+
+func redactPassword(password string) string {
+	if password == "" {
+		return ""
+	}
+	return "..."
 }
 
 // --------------------------------------------------------------------------
@@ -836,6 +895,22 @@ func DefaultConfigPlans() ConfigPlans {
 
 func (c ConfigPlans) Validate() error {
 	return nil
+}
+
+func (c ConfigPlans) redacted(seen map[*ConfigMonitor]*ConfigMonitor) ConfigPlans {
+	if c.Monitor == nil {
+		return c
+	}
+	if redacted, ok := seen[c.Monitor]; ok {
+		c.Monitor = redacted
+		return c
+	}
+
+	redacted := &ConfigMonitor{}
+	seen[c.Monitor] = redacted
+	*redacted = c.Monitor.redacted(seen)
+	c.Monitor = redacted
+	return c
 }
 
 func (c *ConfigPlans) ApplyDefaults(b Config) {
@@ -935,6 +1010,26 @@ func (c ConfigPlanChange) Enabled() bool {
 // --------------------------------------------------------------------------
 
 type ConfigSinks map[string]map[string]string
+
+func (c ConfigSinks) redacted() ConfigSinks {
+	if c == nil {
+		return nil
+	}
+
+	redacted := make(ConfigSinks, len(c))
+	for sinkName, options := range c {
+		if options == nil {
+			redacted[sinkName] = nil
+			continue
+		}
+
+		redacted[sinkName] = make(map[string]string, len(options))
+		for optionName := range options {
+			redacted[sinkName][optionName] = "..."
+		}
+	}
+	return redacted
+}
 
 func DefaultConfigSinks() ConfigSinks {
 	return ConfigSinks{}
