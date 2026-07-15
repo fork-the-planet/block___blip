@@ -67,7 +67,7 @@ func (f httpClientFactory) MakeForSink(sinkName, monitorId string, opts, tags ma
 			return url.Parse(f.cfg.Proxy)
 		}
 		transport.Proxy = proxyFunc
-		blip.Debug("%s sink %s http proxy via %s", monitorId, sinkName, f.cfg.Proxy)
+		blip.Debug("%s sink %s http proxy via %s", monitorId, sinkName, f.cfg.Redacted().Proxy)
 	}
 	return &http.Client{
 		Timeout:   10 * time.Second,
@@ -170,7 +170,7 @@ func (s *Server) Boot(env blip.Env, plugins blip.Plugins, factories blip.Factori
 		return err
 	}
 	s.cfg.InterpolateEnvVars()
-	blip.Debug("config: %#v", s.cfg)
+	blip.Debug("config: %#v", s.cfg.Redacted())
 	if err := s.cfg.Validate(); err != nil {
 		event.Errorf(event.BOOT_CONFIG_INVALID, "%s", err.Error())
 		return err
